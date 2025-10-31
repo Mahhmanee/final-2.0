@@ -143,7 +143,7 @@ async def init_db():
     print("✅ Database initialized.")
 
 async def init_db():
-    async with await adb() as conn:
+    conn = await adb()
         await conn.executescript(INIT_SQL)
         # Автоответчики включены по умолчанию
         await conn.execute(
@@ -159,7 +159,7 @@ def gen_ticket_id(seq: int) -> str:
 
 # ========= ХЕЛПЕРЫ ДЛЯ БД =========
 async def set_user_lang(uid: int, lang: str):
-    async with await adb() as conn:
+    conn = await adb()
         await conn.execute(
             "INSERT INTO users(user_id,lang) VALUES(?,?) "
             "ON CONFLICT(user_id) DO UPDATE SET lang=excluded.lang",
@@ -167,19 +167,19 @@ async def set_user_lang(uid: int, lang: str):
         await conn.commit()
 
 async def get_user_lang(uid: int) -> str:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT lang FROM users WHERE user_id=?", (uid,))
         row = await cur.fetchone()
         return row["lang"] if row else "ru"
 
 async def autores_enabled() -> bool:
-    async with await adb() as conn:
+   conn = await adb()
         cur = await conn.execute("SELECT value FROM settings WHERE key='autoresponders_enabled'")
         row = await cur.fetchone()
         return (row and row["value"] == "1")
 
 async def set_autores_enabled(enabled: bool):
-    async with await adb() as conn:
+    conn = await adb()
         await conn.execute(
             "INSERT INTO settings(key,value) VALUES('autoresponders_enabled',?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -187,13 +187,13 @@ async def set_autores_enabled(enabled: bool):
         await conn.commit()
 
 async def get_autoresponder_text(category: str) -> Optional[str]:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT text FROM autoresponders WHERE category=?", (category,))
         row = await cur.fetchone()
         return row["text"] if row else None
 
 async def set_autoresponder_text(category: str, text: str):
-    async with await adb() as conn:
+   conn = await adb()
         await conn.execute(
             "INSERT INTO autoresponders(category,text) VALUES(?,?) "
             "ON CONFLICT(category) DO UPDATE SET text=excluded.text",
@@ -202,7 +202,7 @@ async def set_autoresponder_text(category: str, text: str):
 
 async def create_ticket(user_id: int, category: str, reason: str, description: str) -> str:
     now = dt.datetime.utcnow().isoformat()
-    async with await adb() as conn:
+    conn = await adb()
         # создаём запись, получаем id, формируем ticket_id
         await conn.execute(
             "INSERT INTO tickets(ticket_id,user_id,category,reason,description,status,created_at) "
@@ -217,29 +217,29 @@ async def create_ticket(user_id: int, category: str, reason: str, description: s
         return t_id
 
 async def store_group_header(ticket_id: str, msg_id: int):
-    async with await adb() as conn:
+    conn = await adb()
         await conn.execute("UPDATE tickets SET group_header_msg_id=? WHERE ticket_id=?", (msg_id, ticket_id))
         await conn.commit()
 
 async def mark_assigned(ticket_id: str, mod_id: int):
-    async with await adb() as conn:
+    conn = await adb()
         await conn.execute("UPDATE tickets SET assigned_to=? WHERE ticket_id=?", (mod_id, ticket_id))
         await conn.commit()
 
 async def get_ticket_user(ticket_id: str) -> Optional[int]:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT user_id FROM tickets WHERE ticket_id=?", (ticket_id,))
         r = await cur.fetchone()
         return r["user_id"] if r else None
 
 async def get_ticket_header(ticket_id: str) -> Optional[int]:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT group_header_msg_id FROM tickets WHERE ticket_id=?", (ticket_id,))
         r = await cur.fetchone()
         return r["group_header_msg_id"] if r else None
 
 async def record_msg(ticket_id: str, role: str, text: str, user_msg_id: int | None, group_msg_id: int | None):
-    async with await adb() as conn:
+    conn = await adb()
         await conn.execute(
             "INSERT INTO messages(ticket_id,from_role,text,user_msg_id,group_msg_id,created_at) "
             "VALUES(?,?,?,?,?,?)",
@@ -247,25 +247,25 @@ async def record_msg(ticket_id: str, role: str, text: str, user_msg_id: int | No
         await conn.commit()
 
 async def get_ticket_group_msg_ids(ticket_id: str) -> List[int]:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT group_msg_id FROM messages WHERE ticket_id=? AND group_msg_id IS NOT NULL",
                                  (ticket_id,))
         rows = await cur.fetchall()
         return [r["group_msg_id"] for r in rows if r["group_msg_id"]]
 
 async def ticket_exists(ticket_id: str) -> bool:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT 1 FROM tickets WHERE ticket_id=?", (ticket_id,))
         return (await cur.fetchone()) is not None
 
 async def ticket_status(ticket_id: str) -> Optional[str]:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute("SELECT status FROM tickets WHERE ticket_id=?", (ticket_id,))
         r = await cur.fetchone()
         return r["status"] if r else None
 
 async def close_ticket(ticket_id: str, closed_by: Optional[int], closed_by_name: Optional[str]):
-    async with await adb() as conn:
+    conn = await adb()
         await conn.execute(
             "UPDATE tickets SET status='closed', closed_by=?, closed_by_name=? WHERE ticket_id=?",
             (closed_by, closed_by_name, ticket_id)
@@ -273,7 +273,7 @@ async def close_ticket(ticket_id: str, closed_by: Optional[int], closed_by_name:
         await conn.commit()
 
 async def ticket_history_text(ticket_id: str, limit: int = 30) -> str:
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute(
             "SELECT from_role, text, created_at FROM messages WHERE ticket_id=? ORDER BY id ASC",
             (ticket_id,))
@@ -444,7 +444,7 @@ async def pm_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 3) Доп. сообщения пользователя — ищем последний open-тикет и пересылаем в группу
-    async with await adb() as conn:
+   conn = await adb()
         cur = await conn.execute(
             "SELECT ticket_id FROM tickets WHERE user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
             (uid,))
@@ -579,7 +579,7 @@ async def cmd_close_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
         return
     uid = update.effective_user.id
-    async with await adb() as conn:
+    conn = await adb()
         cur = await conn.execute(
             "SELECT ticket_id FROM tickets WHERE user_id=? AND status='open' ORDER BY id DESC LIMIT 1", (uid,))
         row = await cur.fetchone()
