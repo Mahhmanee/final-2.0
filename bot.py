@@ -710,11 +710,9 @@ async def main():
     await app.run_polling(close_loop=False)
 
 # ========= ЗАПУСК =========
-import nest_asyncio
-nest_asyncio.apply()
-
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
     except (KeyboardInterrupt, SystemExit):
         print("❌ Bot stopped manually.")
