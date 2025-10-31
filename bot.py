@@ -15,8 +15,8 @@ from telegram.ext import (
 )
 
 # ========= НАСТРОЙКИ =========
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8351785031:AAEa4AgLciZGVO0cHm_Aa4SLqBINzbDDjao")   # ИЛИ храни в Railway Variables
-MOD_GROUP_ID = int(os.getenv("MOD_GROUP_ID", "-1003173446264"))  # ID супергруппы модерации
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8351785031:AAEa4AgLciZGVO0cHm_Aa4SLqBINzbDDjao")   # Заполните в Railway Variables
+MOD_GROUP_ID = int(os.getenv("MOD_GROUP_ID", "-1003173446264"))  # Заполните в Railway Variables
 DB_PATH = os.getenv("DB_PATH", "support.db")
 
 LANGS = {"ru": "Русский", "en": "English"}
@@ -36,7 +36,6 @@ CATS = {
         ("❓ FAQ / Prices / Products", "faq")
     ]
 }
-
 CAT_TITLES_RU = {
     "tech": "🔧 Техническая помощь",
     "pay": "💳 Помощь с платежами",
@@ -45,7 +44,7 @@ CAT_TITLES_RU = {
     "faq": "❓ FAQ / Цены / Товары",
 }
 
-# Активные «сессии ответа» модераторов: mod_id -> ticket_id (чтобы разные модераторы могли вести разные тикеты)
+# Активные «сессии ответа» модераторов: mod_id -> ticket_id
 active_reply: Dict[int, str] = {}
 
 # ========= БАЗА ДАННЫХ =========
@@ -94,14 +93,16 @@ CREATE TABLE IF NOT EXISTS autoresponders (
 );
 """
 
-def adb():
-    # возвращаем awaitable-объект соединения; await будем делать в местах вызова
-    return aiosqlite.connect(DB_PATH, check_same_thread=False)
+# ✅ стабильное подключение к SQLite для Python 3.13.x
+async def adb():
+    conn = await aiosqlite.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = aiosqlite.Row
+    return conn
 
 async def init_db():
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.executescript(INIT_SQL)
-        # Включаем автоответчики по умолчанию
+        # Автоответчики включены по умолчанию
         await conn.execute(
             "INSERT INTO settings(key,value) VALUES('autoresponders_enabled','1') "
             "ON CONFLICT(key) DO NOTHING"
@@ -115,7 +116,7 @@ def gen_ticket_id(seq: int) -> str:
 
 # ========= ХЕЛПЕРЫ ДЛЯ БД =========
 async def set_user_lang(uid: int, lang: str):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute(
             "INSERT INTO users(user_id,lang) VALUES(?,?) "
             "ON CONFLICT(user_id) DO UPDATE SET lang=excluded.lang",
@@ -123,21 +124,19 @@ async def set_user_lang(uid: int, lang: str):
         await conn.commit()
 
 async def get_user_lang(uid: int) -> str:
-    async with (await adb()) as conn:
-        conn.row_factory = aiosqlite.Row
+    async with await adb() as conn:
         cur = await conn.execute("SELECT lang FROM users WHERE user_id=?", (uid,))
         row = await cur.fetchone()
         return row["lang"] if row else "ru"
 
 async def autores_enabled() -> bool:
-    async with (await adb()) as conn:
-        conn.row_factory = aiosqlite.Row
+    async with await adb() as conn:
         cur = await conn.execute("SELECT value FROM settings WHERE key='autoresponders_enabled'")
         row = await cur.fetchone()
         return (row and row["value"] == "1")
 
 async def set_autores_enabled(enabled: bool):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute(
             "INSERT INTO settings(key,value) VALUES('autoresponders_enabled',?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -145,14 +144,13 @@ async def set_autores_enabled(enabled: bool):
         await conn.commit()
 
 async def get_autoresponder_text(category: str) -> Optional[str]:
-    async with (await adb()) as conn:
-        conn.row_factory = aiosqlite.Row
+    async with await adb() as conn:
         cur = await conn.execute("SELECT text FROM autoresponders WHERE category=?", (category,))
         row = await cur.fetchone()
         return row["text"] if row else None
 
 async def set_autoresponder_text(category: str, text: str):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute(
             "INSERT INTO autoresponders(category,text) VALUES(?,?) "
             "ON CONFLICT(category) DO UPDATE SET text=excluded.text",
@@ -161,43 +159,44 @@ async def set_autoresponder_text(category: str, text: str):
 
 async def create_ticket(user_id: int, category: str, reason: str, description: str) -> str:
     now = dt.datetime.utcnow().isoformat()
-    async with (await adb()) as conn:
+    async with await adb() as conn:
+        # создаём запись, получаем id, формируем ticket_id
         await conn.execute(
             "INSERT INTO tickets(ticket_id,user_id,category,reason,description,status,created_at) "
             "VALUES(?,?,?,?,?,'open',?)", ("", user_id, category, reason, description, now))
         await conn.commit()
         cur = await conn.execute("SELECT id FROM tickets WHERE user_id=? ORDER BY id DESC LIMIT 1", (user_id,))
         row = await cur.fetchone()
-        seq = row[0]
+        seq = row["id"]
         t_id = gen_ticket_id(seq)
         await conn.execute("UPDATE tickets SET ticket_id=? WHERE id=?", (t_id, seq))
         await conn.commit()
         return t_id
 
 async def store_group_header(ticket_id: str, msg_id: int):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute("UPDATE tickets SET group_header_msg_id=? WHERE ticket_id=?", (msg_id, ticket_id))
         await conn.commit()
 
 async def mark_assigned(ticket_id: str, mod_id: int):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute("UPDATE tickets SET assigned_to=? WHERE ticket_id=?", (mod_id, ticket_id))
         await conn.commit()
 
 async def get_ticket_user(ticket_id: str) -> Optional[int]:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("SELECT user_id FROM tickets WHERE ticket_id=?", (ticket_id,))
         r = await cur.fetchone()
-        return r[0] if r else None
+        return r["user_id"] if r else None
 
 async def get_ticket_header(ticket_id: str) -> Optional[int]:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("SELECT group_header_msg_id FROM tickets WHERE ticket_id=?", (ticket_id,))
         r = await cur.fetchone()
-        return r[0] if r else None
+        return r["group_header_msg_id"] if r else None
 
 async def record_msg(ticket_id: str, role: str, text: str, user_msg_id: int | None, group_msg_id: int | None):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute(
             "INSERT INTO messages(ticket_id,from_role,text,user_msg_id,group_msg_id,created_at) "
             "VALUES(?,?,?,?,?,?)",
@@ -205,25 +204,25 @@ async def record_msg(ticket_id: str, role: str, text: str, user_msg_id: int | No
         await conn.commit()
 
 async def get_ticket_group_msg_ids(ticket_id: str) -> List[int]:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("SELECT group_msg_id FROM messages WHERE ticket_id=? AND group_msg_id IS NOT NULL",
                                  (ticket_id,))
         rows = await cur.fetchall()
-        return [r[0] for r in rows if r[0]]
+        return [r["group_msg_id"] for r in rows if r["group_msg_id"]]
 
 async def ticket_exists(ticket_id: str) -> bool:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("SELECT 1 FROM tickets WHERE ticket_id=?", (ticket_id,))
         return (await cur.fetchone()) is not None
 
 async def ticket_status(ticket_id: str) -> Optional[str]:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("SELECT status FROM tickets WHERE ticket_id=?", (ticket_id,))
         r = await cur.fetchone()
-        return r[0] if r else None
+        return r["status"] if r else None
 
 async def close_ticket(ticket_id: str, closed_by: Optional[int], closed_by_name: Optional[str]):
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         await conn.execute(
             "UPDATE tickets SET status='closed', closed_by=?, closed_by_name=? WHERE ticket_id=?",
             (closed_by, closed_by_name, ticket_id)
@@ -231,7 +230,7 @@ async def close_ticket(ticket_id: str, closed_by: Optional[int], closed_by_name:
         await conn.commit()
 
 async def ticket_history_text(ticket_id: str, limit: int = 30) -> str:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute(
             "SELECT from_role, text, created_at FROM messages WHERE ticket_id=? ORDER BY id ASC",
             (ticket_id,))
@@ -241,16 +240,15 @@ async def ticket_history_text(ticket_id: str, limit: int = 30) -> str:
     rows = rows[-limit:]
     parts = [f"📜 История по {ticket_id} (последние {len(rows)}):", ""]
     for r in rows:
-        role = r[0]
-        role_h = {"user": "👤 Пользователь", "mod": "🛠 Модератор", "system": "📎 Система"}.get(role, role)
-        txt = (r[1] or "").strip()
+        role = {"user": "👤 Пользователь", "mod": "🛠 Модератор", "system": "📎 Система"}.get(r["from_role"], r["from_role"])
+        txt = (r["text"] or "").strip()
         if len(txt) > 600:
             txt = txt[:600] + "…"
-        parts.append(f"{role_h}:\n{txt}\n")
+        parts.append(f"{role}:\n{txt}\n")
     return "\n".join(parts)
 
 async def stats_text() -> str:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("""
             SELECT COALESCE(closed_by_name, CAST(closed_by AS TEXT)) as who, COUNT(*) c
             FROM tickets
@@ -262,15 +260,15 @@ async def stats_text() -> str:
     if not rows:
         return "📊 Пока никто не закрыл ни одного тикета."
     out = ["📊 Статистика закрытий:"]
-    for who, c in rows:
-        out.append(f"- {who}: {c}")
+    for r in rows:
+        out.append(f"- {r['who']}: {r['c']}")
     return "\n".join(out)
 
 async def last_tickets(limit: int = 10) -> List[str]:
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute("SELECT ticket_id FROM tickets ORDER BY id DESC LIMIT ?", (limit,))
         rows = await cur.fetchall()
-    return [r[0] for r in rows]
+    return [r["ticket_id"] for r in rows]
 
 # ========= КНОПКИ =========
 def ticket_keyboard(ticket_id: str, assigned_to: Optional[int]=None) -> InlineKeyboardMarkup:
@@ -288,7 +286,7 @@ def panel_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📊 Статистика", callback_data="p:stats"),
          InlineKeyboardButton("📜 История", callback_data="p:history")],
         [InlineKeyboardButton("🤖 Автоответчики", callback_data="p:autores"),
-         InlineKeyboardButton("📊 Проверить статус", callback_data="p:status")]
+         InlineKeyboardButton("📟 Статус бота", callback_data="p:status")]
     ])
 
 def stats_keyboard() -> InlineKeyboardMarkup:
@@ -402,8 +400,8 @@ async def pm_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
-    # 3) Дополнительные сообщения пользователя — ищем последний open-тикет и пересылаем в группу
-    async with (await adb()) as conn:
+    # 3) Доп. сообщения пользователя — ищем последний open-тикет и пересылаем в группу
+    async with await adb() as conn:
         cur = await conn.execute(
             "SELECT ticket_id FROM tickets WHERE user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
             (uid,))
@@ -413,14 +411,14 @@ async def pm_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "To create a ticket, press /start and choose a section."
         await update.effective_message.reply_text(t)
         return
-    t_id = row[0]
+    t_id = row["ticket_id"]
 
     # шапка
     head = f"[{t_id}] Сообщение от пользователя @{update.effective_user.username or update.effective_user.full_name} (ID: {uid}):"
     h = await context.bot.send_message(MOD_GROUP_ID, head)
     await record_msg(t_id, "system", head, None, h.message_id)
 
-    # копируем контент (с медиа)
+    # копируем контент (включая медиа)
     copied = await context.bot.copy_message(
         chat_id=MOD_GROUP_ID,
         from_chat_id=uid,
@@ -493,7 +491,6 @@ async def cb_ticket_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         await q.message.reply_text(f"✅ Тикет {ticket_id} закрыт и сообщения удалены.")
-        # если модератор был в режиме ответа — сбросить
         if active_reply.get(mod.id) == ticket_id:
             active_reply.pop(mod.id, None)
         return
@@ -501,7 +498,7 @@ async def cb_ticket_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "noop":
         return
 
-# ========= ПЕРЕСЫЛКА ОТ МОДЕРАТОРОВ ПОЛЬЗОВАТЕЛЮ =========
+# ========= ПЕРЕСЫЛКА ОТ МОДЕРАЦИИ ПОЛЬЗОВАТЕЛЮ =========
 async def mod_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != MOD_GROUP_ID:
         return
@@ -516,7 +513,6 @@ async def mod_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not uid:
         return
 
-    # Копируем сообщение пользователю
     await context.bot.copy_message(
         chat_id=uid,
         from_chat_id=MOD_GROUP_ID,
@@ -540,14 +536,14 @@ async def cmd_close_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
         return
     uid = update.effective_user.id
-    async with (await adb()) as conn:
+    async with await adb() as conn:
         cur = await conn.execute(
             "SELECT ticket_id FROM tickets WHERE user_id=? AND status='open' ORDER BY id DESC LIMIT 1", (uid,))
         row = await cur.fetchone()
     if not row:
         await update.effective_message.reply_text("У вас нет открытых тикетов.")
         return
-    ticket_id = row[0]
+    ticket_id = row["ticket_id"]
 
     gids = await get_ticket_group_msg_ids(ticket_id)
     for mid in gids:
@@ -561,7 +557,7 @@ async def cmd_close_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"✅ Тикет {ticket_id} закрыт.")
     await context.bot.send_message(MOD_GROUP_ID, f"❌ Тикет {ticket_id} закрыт пользователем.")
 
-# ========= ПАНЕЛЬ МОДЕРАЦИИ (КНОПКИ) =========
+# ========= ПАНЕЛЬ МОДЕРАЦИИ =========
 async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != MOD_GROUP_ID:
         return
