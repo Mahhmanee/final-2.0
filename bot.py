@@ -144,15 +144,14 @@ async def init_db():
 
 async def init_db():
     conn = await adb()
-        await conn.executescript(INIT_SQL)
-        # Автоответчики включены по умолчанию
-        await conn.execute(
-            "INSERT INTO settings(key,value) VALUES('autoresponders_enabled','1') "
-            "ON CONFLICT(key) DO NOTHING"
-        )
-        await conn.commit()
+    await conn.executescript(INIT_SQL)
+    # Автоответчики включены по умолчанию
+    await conn.execute(
+        "INSERT INTO settings(key,value) VALUES('autoresponders_enabled','1') "
+        "ON CONFLICT(key) DO NOTHING"
+    )
+    await conn.commit()
     print("✅ Database initialized.")
-
 def gen_ticket_id(seq: int) -> str:
     today = dt.datetime.now().strftime("%Y%m%d")
     return f"T-{today}-{seq:04d}"
@@ -173,7 +172,7 @@ async def get_user_lang(uid: int) -> str:
         return row["lang"] if row else "ru"
 
 async def autores_enabled() -> bool:
-   conn = await adb()
+    conn = await adb()
         cur = await conn.execute("SELECT value FROM settings WHERE key='autoresponders_enabled'")
         row = await cur.fetchone()
         return (row and row["value"] == "1")
