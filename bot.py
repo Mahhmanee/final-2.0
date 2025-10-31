@@ -95,12 +95,19 @@ CREATE TABLE IF NOT EXISTS autoresponders (
 
 import aiosqlite
 
-async def adb() -> aiosqlite.Connection:
-    # Полностью безопасное соединение без повторных потоков
-    conn = await aiosqlite.connect(DB_PATH, check_same_thread=False, timeout=30)
-    conn.row_factory = aiosqlite.Row
-    return conn
+DB_PATH = "support.db"
+_db_conn = None  # глобальное соединение
 
+async def adb() -> aiosqlite.Connection:
+    """
+    Создаёт одно соединение с базой данных и переиспользует его.
+    Это устраняет ошибку 'threads can only be started once' на Railway.
+    """
+    global _db_conn
+    if _db_conn is None:
+        _db_conn = await aiosqlite.connect(DB_PATH, check_same_thread=False, timeout=30)
+        _db_conn.row_factory = aiosqlite.Row
+    return _db_conn
 
 async def init_db():
     async with await adb() as conn:
