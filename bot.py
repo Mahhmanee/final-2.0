@@ -94,20 +94,53 @@ CREATE TABLE IF NOT EXISTS autoresponders (
 """
 
 import aiosqlite
+import asyncio
+import os
 
-DB_PATH = "support.db"
-_db_conn = None  # глобальное соединение
+DB_PATH = os.getenv("DB_PATH", "support.db")
+
+# Глобальное соединение с базой данных
+_db_conn: aiosqlite.Connection | None = None
 
 async def adb() -> aiosqlite.Connection:
     """
-    Создаёт одно соединение с базой данных и переиспользует его.
-    Это устраняет ошибку 'threads can only be started once' на Railway.
+    Возвращает одно постоянное соединение с базой данных.
+    Исправляет ошибку 'threads can only be started once' на Railway.
     """
     global _db_conn
     if _db_conn is None:
+        # создаём соединение только один раз
         _db_conn = await aiosqlite.connect(DB_PATH, check_same_thread=False, timeout=30)
         _db_conn.row_factory = aiosqlite.Row
     return _db_conn
+
+
+async def init_db():
+    """
+    Безопасная инициализация БД, вызывается только один раз при старте.
+    """
+    conn = await adb()  # используем уже готовое соединение
+    await conn.executescript("""
+    PRAGMA journal_mode=WAL;
+
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        lang TEXT DEFAULT 'ru'
+    );
+
+    CREATE TABLE IF NOT EXISTS tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id TEXT UNIQUE,
+        user_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        reason TEXT,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL
+    );
+    """)
+    await conn.commit()
+    print("✅ Database initialized.")
 
 async def init_db():
     async with await adb() as conn:
