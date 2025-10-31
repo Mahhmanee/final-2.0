@@ -152,32 +152,37 @@ async def init_db():
     )
     await conn.commit()
     print("✅ Database initialized.")
+
+
 def gen_ticket_id(seq: int) -> str:
     today = dt.datetime.now().strftime("%Y%m%d")
     return f"T-{today}-{seq:04d}"
 
-# ========= ХЕЛПЕРЫ ДЛЯ БД =========
+
+# ======== ХЕЛПЕРЫ ДЛЯ БД ========
+
 async def set_user_lang(uid: int, lang: str):
     conn = await adb()
-        await conn.execute(
-            "INSERT INTO users(user_id,lang) VALUES(?,?) "
-            "ON CONFLICT(user_id) DO UPDATE SET lang=excluded.lang",
-            (uid, lang))
-        await conn.commit()
+    await conn.execute(
+        "INSERT INTO users(user_id,lang) VALUES(?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET lang=excluded.lang",
+        (uid, lang)
+    )
+    await conn.commit()
+
 
 async def get_user_lang(uid: int) -> str:
     conn = await adb()
-        cur = await conn.execute("SELECT lang FROM users WHERE user_id=?", (uid,))
-        row = await cur.fetchone()
-        return row["lang"] if row else "ru"
+    cur = await conn.execute("SELECT lang FROM users WHERE user_id=?", (uid,))
+    row = await cur.fetchone()
+    return row["lang"] if row else "ru"
+
 
 async def autores_enabled() -> bool:
     conn = await adb()
-        cur = await conn.execute("SELECT value FROM settings WHERE key='autoresponders_enabled'")
-        row = await cur.fetchone()
-        return (row and row["value"] == "1")
-
-async def set_autores_enabled(enabled: bool):
+    cur = await conn.execute("SELECT value FROM settings WHERE key='autoresponders_enabled'")
+    row = await cur.fetchone()
+    return (row and row["value"] == "1")
     conn = await adb()
         await conn.execute(
             "INSERT INTO settings(key,value) VALUES('autoresponders_enabled',?) "
