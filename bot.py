@@ -93,11 +93,14 @@ CREATE TABLE IF NOT EXISTS autoresponders (
 );
 """
 
-# ✅ стабильное подключение к SQLite для Python 3.13.x
-async def adb():
-    conn = await aiosqlite.connect(DB_PATH, check_same_thread=False)
+import aiosqlite
+
+async def adb() -> aiosqlite.Connection:
+    # Полностью безопасное соединение без повторных потоков
+    conn = await aiosqlite.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = aiosqlite.Row
     return conn
+
 
 async def init_db():
     async with await adb() as conn:
